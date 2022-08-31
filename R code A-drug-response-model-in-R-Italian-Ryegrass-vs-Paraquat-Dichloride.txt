@@ -1,0 +1,108 @@
+#==========Loading packages and data ===============
+library(easypackages)
+libraries("agricolae","psych","rlist","rstatix","lme4","car","usefun","tidyverse")
+libraries("gridExtra","gmodels","lmerTest","multcomp","emmeans","multcompView","nlme","moments","drc")
+df1<- read.csv("../Data/Processed/AC_Data_03_20_2022.csv")
+df2<-df1%>%filter(!Classification %in% c("S2","S3"))%>%
+           mutate(LogRate=log(HerbicideRate+1))%>%
+           mutate(Type="Resistant")%>%
+           mutate(Type=replace(Type,Classification=="S1","Susceptible"))
+source("./Functions/All_Functions.r") # Installs all useful functions
+#=================Summary Statistics and general plots ==============
+sum1=sumstat2(df1,DryWt,Population,HerbicideRate)
+write.csv(sum1,"../Results/DryWt/Summaries/DryWt_Vs_Population.csv")
+sum2=sumstat2(df2,DryWt,Type,HerbicideRate)
+write.csv(sum2,"../Results/DryWt//Summaries/DryWt_Vs_Type.csv")
+#=== Simple Scatterplot by Populations
+p1=ggplot(df2,aes(x=HerbicideRate,y=DryWt))+
+  geom_point()+geom_smooth()+
+  ylab("Dry Weight")+xlab("Herbicide Rate")+
+  ggtitle("Dry weight by herbicide rate for various populations")+
+  theme_bw()+ 
+  facet_grid(Population ~ ., space="free")
+p1
+ggsave("../Results/DryWt/Graphs/DryWt_Vs_PopulationSmall.jpg",width=20,height=10,p1)
+ggsave("../Results/DryWt/Graphs/DryWt_Vs_PopulationSmall.pdf",width=20,height=10,p1)
+
+#=== Average Scatterplot by Type
+p1=ggplot(sum2,aes(x=HerbicideRate,y=mean))+
+  geom_point()+geom_smooth(se=F)+
+  ylab("Dry Weight")+xlab("Herbicide Rate")+
+  ggtitle("Dry weight by herbicide rate for various types")+
+  theme_bw()+ 
+  facet_grid(Type ~ ., space="free")
+p1
+ggsave("../Results/DryWt/Graphs/AverageDryWt_vs_Type.jpg",width=20,height=10,p1)
+ggsave("../Results/DryWt/Graphs/AverageDryWt_vs_Type.pdf",width=20,height=10,p1)
+
+
+#=== Scatterplot of Log by Type
+p1=ggplot(df2,aes(x=LogRate,y=DryWt))+
+  geom_point()+geom_smooth()+
+  ylab("Dry Weight")+xlab("Log of Herbicide Rate")+
+  ggtitle("Dry weight by log of herbicide rate for suseptible vs resistent")+
+  theme_bw()+ 
+  facet_grid(.~Type, space="free")
+p1
+ggsave("../Results/DryWt/Graphs/DryWt_vs_LogRate.jpg",width=20,height=10,p1)
+ggsave("../Results/DryWt/Graphs/DryWt_vs_LogRate.pdf",width=20,height=10,p1)
+
+#=============Model Creation for DryWt using different types ===================
+##What is the appropriate model to useWant low AIC and Lack of Fit should not be significant*********
+model1<-drm(DryWt~HerbicideRate, Type, data=df2, fct=LL.4 (fixed=c(NA,NA,NA,NA)))
+l1=enframe(coef(model1))%>%separate(name,c("Coefficient","Type"))%>%pivot_wider(names_from = Coefficient,values_from = value)
+write.csv(l1,"../Results/DryWt/Coefficients_Susceptibility.csv")
+tbl=mselect(model1, list(LL.3(),LL.5(), LL.4(), W1.4(), W1.3(),W2.4()), linreg=F)
+write.csv(tbl,"../Results/DryWt/Modelfit.csv")
+#=============Calculating ED50 90s or whatever value point along curve==============
+Eds=as.data.frame(ED(model1, c(50,90)))%>%rownames_to_column("Nms")%>%
+    separate(Nms,c("Coefficient","Type","Value"))%>%dplyr::select(-Coefficient)
+write.csv(Eds,"../Results/DryWt/ED_vs_DryWt_ByType.csv",row.names = F)
+#**Comparing ED values across types
+l1=EdComps=as.data.frame(EDcomp(model1,c(50,50)))
+l2=EdComps=as.data.frame(EDcomp(model1,c(90,90)))
+l=rbind(l1,l2)
+write.csv(l,"../Results/DryWt/EDComparisons_vs_DryWt_ByType.csv")
+#**Plot Dose Response Curves**
+jpeg("../Results/DryWt/Graphs/ED_vs_DryWt_ByType.jpg")
+plot(model1, ylim=c(0,0.5),  ylab='Dry Weight (% of Control)', xlab='Rate (g/ha)')
+dev.off()
+#=============Model Creation fit  for DryWt using different Categories ===================
+model2<-drm(DryWt~HerbicideRate, Classification, data=df2, fct=LL.4 (fixed=c(NA,NA,NA,NA)))
+l1=enframe(coef(model2))%>%separate(name,c("Coefficient","Type"))%>%pivot_wider(names_from = Coefficient,values_from = value)
+write.csv(l1,"../Results/DryWt/Coefficients_Classification.csv")
+#**What is the appropiate model to use**Want low AIC and Lack of Fit should not be significant*********
+mselect(model2, list(LL.3(),LL.5(), LL.4(), W1.4(), W1.3(),W2.4()), linreg=T)
+
+Eds=as.data.frame(ED(model2, c(50,90)))
+write.csv(Eds,"../Results/DryWt/ED_vs_DryWt_ByClassification.csv")
+#**Plot Dose Response Curves**
+jpeg("../Results/DryWt/Graphs/ED_vs_DryWt_ByClassification.jpg")
+plot(model2, ylim=c(0,0.5),  ylab='Dry Weight (% of Control)', xlab='Rate (g/ha)')
+dev.off()
+#=========== Logistic Regression for Alive-Dead =========================================
+logmodel1 <- glm(Alive_Dead ~., data = df1, family = "binomial")
+sink("../Results/Logistic/RegressionFull.doc")
+summary(logmodel1)
+confint(logmodel1)
+exp(coef(logmodel1))
+exp(cbind(OR = coef(logmodel1), confint(logmodel1)))
+with(logmodel1, null.deviance - deviance)
+with(logmodel1, df.null - df.residual)
+with(logmodel1, pchisq(null.deviance - deviance, df.null - df.residual, lower.tail = FALSE))
+# our model as a whole fits significantly better than an empty model
+logLik(logmodel1) 
+sink()
+
+logmodel2 <- glm(Alive_Dead ~Population+HerbicideRate+Replication+ExperimentRun, data = df1, family = "binomial")
+sink("../Results/Logistic/RegressionSimple.doc")
+summary(logmodel2)
+confint(logmodel2)
+exp(coef(logmodel2))
+exp(cbind(OR = coef(logmodel2), confint(logmodel2)))
+with(logmodel2, null.deviance - deviance)
+with(logmodel2, df.null - df.residual)
+with(logmodel2, pchisq(null.deviance - deviance, df.null - df.residual, lower.tail = FALSE))
+# our model as a whole fits significantly better than an empty model
+logLik(logmodel2) 
+sink()
